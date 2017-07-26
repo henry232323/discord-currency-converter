@@ -68,7 +68,7 @@ class API(Kyoukai):
                                              #auth=aiohttp.BasicAuth(self.client_id, self.client_secret),
 
                                              )
-        self.logger = logging.getLogger('kyoukai')
+        self.logger = logging.getLogger('currency-converter')
         self.logger.setLevel(logging.INFO)
         self.handler = logging.FileHandler(filename="transactions.log",
                                            encoding='utf-8',
@@ -98,7 +98,10 @@ class API(Kyoukai):
                     f"https://discordapp.com/api/oauth2/token?{urlencode(data)}",
                 )
                 js = await response.json()
+                if 'error' in js:
+                    return Response("Invalid code or redirect", status=500)
                 token = js['access_token']
+                logging.info("Received Discord OAuth2 code, grabbing token")
                 return redirect(f"/authorize?token={token}", code=303)
             except:
                 traceback.print_exc()
@@ -119,16 +122,18 @@ class API(Kyoukai):
 
                 async with self.pool.acquire() as connection:
                     exists = await connection.fetch(
-                        f"""SELECT * FROM userdata WHERE user_id = {js['id']}"""
+                        f"""SELECT * FROM userdata WHERE user_id = {js['id']};"""
                     )
 
                     if exists:
+                        logging.info(f"Received request to view user info for {js['id']}")
                         js = {
                             "user_id": js["id"],
                             "bots": exists[0]["bots"],
                             "token": exists[0]["token"]
                         }
                     else:
+                        logging.info(f"Creating new database entry for user {js['id']}")
                         token = secrets.token_urlsafe(48)
 
                         await connection.fetch(
@@ -161,6 +166,7 @@ class API(Kyoukai):
         @self.route("/add/", methods=["GET", "POST"])
         async def add(ctx: HTTPRequestContext):
             if ctx.request.method == "POST":
+                logging.info("Received request to ADD bot")
                 if "Authorization" not in ctx.request.headers:
                     return HTTPException("Failed to provide token!",  # Token was omitted from the headers
                                          response=Response("Failed to fetch info!", status=401))
@@ -171,10 +177,11 @@ class API(Kyoukai):
         @self.route("/bots/<int:snowflake>/", methods=["GET", "POST"])  # Post to `/bots/:bot_id/` with token in headers
         async def convert(ctx: HTTPRequestContext, snowflake: int):
             if ctx.request.method == "GET":
+                logging.info(f"Received request to view info on bot {snowflake}")
                 snowflake = int(snowflake)
                 async with self.pool.acquire() as connection:
                     response = await connection.fetch(
-                        f"""SELECT * FROM botdata WHERE id = {snowflake}"""
+                        f"""SELECT * FROM botdata WHERE id = {snowflake};"""
                     )
                 return Response(json.dumps(dict(response[0]), indent=4), status=200, content_type="text/json")
             else:
@@ -210,6 +217,7 @@ class API(Kyoukai):
                         }
                         dumped = json.dumps(payload, indent=4)
 
+                        logging.info(f"Received request to convert {ctx.request.form['amount']} from {name} to {ctx.request.form['to_bot']} on server {ctx.request.form['server_id']}")
                         if type is 0:  # If using webhooks
                             try:
                                 await self.session.post(url, json=dumped)  # Post the payload to the other bot's URL
